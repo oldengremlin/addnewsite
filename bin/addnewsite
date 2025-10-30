@@ -45,7 +45,7 @@ def step1_dockerscompose0
   puts
   puts "  # #{$sitename.upcase}"
   puts "  wordpress-#{$contname}:"
-  puts '    image: wordpress:6.6.2-php8.3-fpm'
+  puts '    image: wordpress:6.8.3-php8.4-fpm'
   puts '    restart: unless-stopped'
   puts "    container_name: wordpress-#{$contname}"
   puts '    environment:'

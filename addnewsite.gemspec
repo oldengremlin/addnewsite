@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name          = "addnewsite"
-  spec.version       = "0.1.0"
+  spec.version       = "0.1.1"
   spec.authors       = ["Olden Gremlin"]
   spec.email         = ["oldengremlin@gmail.com"]
   spec.summary       = "Tool to generate configs for new WordPress site setup"
