@@ -5,7 +5,8 @@ Generates Docker Compose and Nginx configs for adding a new site.
 
 ```bash
 gem build addnewsite.gemspec
-gem install ./addnewsite-0.1.0.gem
+sudo gem uninstall addnewsite
+sudo gem install ./addnewsite-0.1.1.gem
 ```
 
 ## execute
