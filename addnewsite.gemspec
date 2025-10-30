@@ -5,7 +5,7 @@ Gem::Specification.new do |spec|
   spec.email         = ["oldengremlin@gmail.com"]
   spec.summary       = "Tool to generate configs for new WordPress site setup"
   spec.description   = "Generates Docker Compose and Nginx configs for adding a new site."
-  spec.homepage      = "https://github.com/your/repo"  # Якщо є репозиторій
+  spec.homepage      = "https://github.com/oldengremlin/addnewsite"
   spec.license       = "MIT"
   spec.files         = Dir["{bin,lib}/**/*"] + %w[README.md]
   spec.bindir        = "bin"
