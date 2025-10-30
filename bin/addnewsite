@@ -1,0 +1,285 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+# encoding: utf-8
+
+require 'optparse'
+require 'securerandom'
+
+$verbose = false
+$sitename = ''
+$contname = ''
+$dbpasswd = ''
+
+def usage
+  puts "#{File.basename($0)} -s sitename [-pPASSWORD] [-v]"
+end
+
+def parse_options_and_set_var
+  options = {}
+  OptionParser.new do |opts|
+    opts.banner = "Usage: #{File.basename($0)} [options]"
+
+    opts.on('-v', '--verbose', 'Verbose mode') { $verbose = true }
+    opts.on('-h', '--help', 'Display this screen') do
+      puts opts
+      exit
+    end
+    opts.on('-s', '--site SITENAME', 'Site name (required)') { |v| options[:sitename] = v }
+    opts.on('-p', '--dbpasswd PASSWORD', 'Database password (optional)') { |v| options[:dbpasswd] = v }
+  end.parse!
+
+  $sitename = options[:sitename]
+  raise 'Site name is required and must be at least 3 characters' if $sitename.nil? || $sitename.length < 3
+
+  $contname = $sitename.gsub('.', '')
+  $dbpasswd = options[:dbpasswd] || SecureRandom.urlsafe_base64(45)  # Approximately 60 characters URL-safe
+end
+
+def step1_dockerscompose0
+  puts 'Додати у docker-compose.yml.'
+  puts '============================'
+  puts
+  puts 'В секцію services додати наступні сервіси:'
+  puts '------------------------------------------'
+  puts 'services:'
+  puts
+  puts "  # #{$sitename.upcase}"
+  puts "  wordpress-#{$contname}:"
+  puts '    image: wordpress:6.6.2-php8.3-fpm'
+  puts '    restart: unless-stopped'
+  puts "    container_name: wordpress-#{$contname}"
+  puts '    environment:'
+  puts "      WORDPRESS_DB_HOST: db-#{$contname}"
+  puts "      WORDPRESS_DB_USER: u#{$contname}"
+  puts "      WORDPRESS_DB_PASSWORD: #{$dbpasswd}"
+  puts "      WORDPRESS_DB_NAME: #{$contname}"
+  puts '    volumes:'
+  puts "      - wordpress-#{$contname}:/var/www/html/#{$sitename}"
+  puts '    depends_on:'
+  puts "      - db-#{$contname}"
+  puts '    networks:'
+  puts '      - app-network'
+  puts
+  puts "  db-#{$contname}:"
+  puts '    image: mysql'
+  puts '    restart: unless-stopped'
+  puts "    container_name: db-#{$contname}"
+  puts '    command:'
+  puts "      - '--skip-log-bin'"
+  puts '    environment:'
+  puts "      MYSQL_DATABASE: #{$contname}"
+  puts "      MYSQL_USER: u#{$contname}"
+  puts "      MYSQL_PASSWORD: #{$dbpasswd}"
+  puts "      MYSQL_RANDOM_ROOT_PASSWORD: '1'"
+  puts '    cap_add:'
+  puts '      - CAP_SYS_NICE'
+  puts '    security_opt:'
+  puts '      - seccomp:unconfined'
+  puts '    volumes:'
+  puts "      - db-#{$contname}:/var/lib/mysql"
+  puts '    networks:'
+  puts '      - app-network'
+  puts '    healthcheck:'
+  puts '      timeout: 20s'
+  puts '      retries: 10'
+  puts "      test: [ \"CMD\", \"mysqladmin\", \"ping\", \"-hlocalhost\", \"-u#{$contname}\", \"-p#{$dbpasswd}\" ]"
+  puts
+  puts "  certbot-#{$contname}:"
+  puts '    image: certbot/certbot'
+  puts "    container_name: certbot-#{$contname}"
+  puts '    depends_on:'
+  puts '      - webserver'
+  puts '    volumes:'
+  puts '      - certbot-etc:/etc/letsencrypt'
+  puts '      - certbot-var:/var/lib/letsencrypt'
+  puts "      - wordpress-#{$contname}:/var/www/html/#{$sitename}"
+  puts '    command: certonly --webroot --email oldengremlin@gmail.com --agree-tos --no-eff-email --staging --webroot-path=/var/www/html/' + $sitename + ' -d ' + $sitename
+  puts
+  puts 'У сервіс webserver додайте depends_on та volumes:'
+  puts '-------------------------------------------------'
+  puts '  webserver:'
+  puts '    depends_on:'
+  puts "      - wordpress-#{$contname}"
+  puts '    volumes:'
+  puts "      - wordpress-#{$contname}:/var/www/html/#{$sitename}"
+  puts
+  puts 'В секцію volumes додати наступні розділи:'
+  puts '-----------------------------------------'
+  puts "  wordpress-#{$contname}:"
+  puts '    driver: local'
+  puts '    driver_opts:'
+  puts '      type: none'
+  puts '      o: bind'
+  puts "      device: /var/sites/#{$sitename}/web"
+  puts "  db-#{$contname}:"
+  puts '    driver: local'
+  puts '    driver_opts:'
+  puts '      type: none'
+  puts '      o: bind'
+  puts "      device: /var/sites/#{$sitename}/db"
+  puts
+end
+
+def step2_nginx0
+  puts 'Додайте у nginx.conf.'
+  puts '---------------------'
+  puts 'server {'
+  puts '    listen 80;'
+  puts '    listen [::]:80;'
+  puts "    server_name #{$sitename};"
+  puts
+  puts '    index index.php index.html index.htm;'
+  puts
+  puts "    root /var/www/html/#{$sitename};"
+  puts
+  puts '    location ~ /.well-known/acme-challenge {'
+  puts '        allow all;'
+  puts "        root /var/www/html/#{$sitename};"
+  puts '    }'
+  puts
+  puts '    location / {'
+  puts '            try_files $uri $uri/ /index.php$is_args$args;'
+  puts '    }'
+  puts
+  puts '    location ~ \.php$ {'
+  puts '            try_files $uri =404;'
+  puts '            fastcgi_split_path_info ^(.+\.php)(/.+)$;'
+  puts "            fastcgi_pass wordpress-#{$contname}:9000;"
+  puts '            fastcgi_index index.php;'
+  puts '            include fastcgi_params;'
+  puts '            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;'
+  puts '            fastcgi_param PATH_INFO $fastcgi_path_info;'
+  puts '    }'
+  puts
+  puts '    location ~ /\.ht {'
+  puts '            deny all;'
+  puts '    }'
+  puts
+  puts '    location = /favicon.ico {'
+  puts '            log_not_found off; access_log off;'
+  puts '    }'
+  puts '    location = /robots.txt {'
+  puts '            log_not_found off; access_log off; allow all;'
+  puts '    }'
+  puts '    location ~* \.(css|gif|ico|jpeg|jpg|js|png)$ {'
+  puts '            expires max;'
+  puts '            log_not_found off;'
+  puts '    }'
+  puts
+  puts '}'
+  puts
+end
+
+def step3_startservice0
+  puts 'Запустити на виконання:'
+  puts '-----------------------'
+  puts "    sudo mkdir -p /var/sites/#{$sitename}/{db,web}"
+  puts "    sudo chown -R systemd-coredump.systemd-coredump /var/sites/#{$sitename}/db"
+  puts "    sudo chown -R www-data.www-data /var/sites/#{$sitename}/web"
+  puts "    docker-compose up -d wordpress-#{$contname}"
+  puts "    docker-compose ps db-#{$contname} wordpress-#{$contname}"
+  puts '    docker-compose up -d --force-recreate --no-deps webserver'
+  puts "    docker-compose up certbot-#{$contname}"
+  puts "    docker-compose ps certbot-#{$contname}"
+  puts
+end
+
+def step4_nginx0
+  puts 'У nginx.conf замінити конфігурацію наведену вище на наступну:'
+  puts '-------------------------------------------------------------'
+  puts 'server {'
+  puts '    listen 80;'
+  puts '    listen [::]:80;'
+  puts "    server_name #{$sitename};"
+  puts '    location ~ /.well-known/acme-challenge {'
+  puts '        allow all;'
+  puts "        root /var/www/html/#{$sitename};"
+  puts '    }'
+  puts "    return 302 https://#{$sitename}$request_uri;"
+  puts '}'
+  puts 'server {'
+  puts '    listen 443 ssl http2;'
+  puts '    listen [::]:443 ssl http2;'
+  puts "    server_name #{$sitename};"
+  puts
+  puts '    index index.php index.html index.htm;'
+  puts
+  puts "    root /var/www/html/#{$sitename};"
+  puts
+  puts '    server_tokens off;'
+  puts "    ssl_certificate /etc/letsencrypt/live/#{$sitename}/fullchain.pem;"
+  puts "    ssl_certificate_key /etc/letsencrypt/live/#{$sitename}/privkey.pem;"
+  puts "    ssl_trusted_certificate /etc/letsencrypt/live/#{$sitename}/chain.pem;"
+  puts '    include /etc/nginx/conf.d/options-ssl-nginx.conf;'
+  puts
+  puts '    location / {'
+  puts '            try_files $uri $uri/ /index.php$is_args$args;'
+  puts '    }'
+  puts
+  puts '    location ~ \.php$ {'
+  puts '            try_files $uri =404;'
+  puts '            fastcgi_split_path_info ^(.+\.php)(/.+)$;'
+  puts "            fastcgi_pass wordpress-#{$contname}:9000;"
+  puts '            fastcgi_index index.php;'
+  puts '            include fastcgi_params;'
+  puts '            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;'
+  puts '            fastcgi_param PATH_INFO $fastcgi_path_info;'
+  puts '    }'
+  puts
+  puts '    location ~ /\.ht {'
+  puts '            deny all;'
+  puts '    }'
+  puts
+  puts '    location = /favicon.ico {'
+  puts '            log_not_found off; access_log off;'
+  puts '    }'
+  puts '    location = /robots.txt {'
+  puts '            log_not_found off; access_log off; allow all;'
+  puts '    }'
+  puts '    location ~* \.(css|gif|ico|jpeg|jpg|js|png)$ {'
+  puts '            expires max;'
+  puts '            log_not_found off;'
+  puts '    }'
+  puts
+  puts '}'
+  puts
+end
+
+def step5_startservice1
+  puts 'Запустити на виконання:'
+  puts '-----------------------'
+  puts '    docker-compose up -d --force-recreate --no-deps webserver'
+  puts "    docker-compose ps db-#{$contname} wordpress-#{$contname}"
+  puts '    docker volume prune -f'
+  puts '    docker network prune -f'
+  puts '    docker container prune -f'
+  puts
+end
+
+def step6_dockerscompose1
+  puts "У сервісі certbot-#{$contname} замінити конфігураційну строку:"
+  puts '----------------------------------------------------'
+  puts "  certbot-#{$contname}:"
+  puts '    command: certonly --webroot --email oldengremlin@gmail.com --agree-tos --no-eff-email --staging --webroot-path=/var/www/html/' + $sitename + ' -d ' + $sitename
+  puts
+  puts 'на наступну'
+  puts '-----------'
+  puts "  certbot-#{$contname}:"
+  puts '    command: certonly --webroot --email oldengremlin@gmail.com --agree-tos --no-eff-email --force-renewal --webroot-path=/var/www/html/' + $sitename + ' -d ' + $sitename
+  puts
+end
+
+begin
+  parse_options_and_set_var
+  step1_dockerscompose0
+  step2_nginx0
+  step3_startservice0
+  step4_nginx0
+  step5_startservice1
+  step6_dockerscompose1
+rescue StandardError => e
+  puts e.message
+  usage
+  exit 2
+end
+
